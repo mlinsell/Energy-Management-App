@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>CEMS</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <?!= include('Stylesheet'); ?>
+</head>
+<body>
+  <div id="toast-container"></div>
+  <div id="app">
+    <div id="loading-screen"><div class="pulse-logo mono">CEMS</div></div>
+    <div id="error-screen" style="display:none;"><div style="text-align:center; padding: 20px;"><h2 style="color:var(--text-main);">System Error</h2><p id="error-msg" class="muted"></p><button class="btn btn-secondary" onclick="init()">Retry</button></div></div>
+    <div id="main" style="display:none">
+      <div id="tab-today" class="tab-content active">
+        <div class="header">
+          <h1 id="today-date-label">--</h1>
+          <div class="badge-container">
+            <button class="day-badge" id="day-badge-btn" onclick="toggleDropdown()">--</button>
+            <div class="dropdown" id="day-dropdown">
+              <button onclick="overrideDay('work')">WORK DAY</button>
+              <button onclick="overrideDay('autonomous')">AUTONOMOUS</button>
+              <button onclick="overrideDay('rest')">REST DAY</button>
+            </div>
+          </div>
+        </div>
+        <div class="gauge-section">
+          <div class="gauge-header"><span class="pts-current mono bold" id="gauge-current">0.0</span><span class="pts-allowance mono muted" id="gauge-allowance">/ 0.0</span></div>
+          <div class="gauge-bar-bg"><div class="gauge-fill" id="gauge-fill"></div></div>
+          <div class="gauge-footer">
+            <span class="status-label" id="gauge-status">LOADING</span>
+            <button class="sync-btn" onclick="triggerSync()"><svg id="sync-icon" viewBox="0 0 24 24" style="width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></button>
+          </div>
+        </div>
+        <button class="breakdown-toggle" onclick="toggleBreakdown()"><span id="bd-icon">▾</span> Details</button>
+        <div class="breakdown-content mono" id="breakdown-panel">
+          <div class="bd-row"><span>Event Load</span><span id="bd-events">0.0</span></div>
+          <div class="bd-row" style="display:none;"><span>Desk Baseline</span><span id="bd-baseline">0.0</span></div>
+          <div class="bd-row"><span>Recovery Credit</span><span id="bd-recovery" class="text-recovery">0.0</span></div>
+          <div class="bd-row"><span>Penalties</span><span id="bd-penalties">0.0</span></div>
+          <div class="bd-divider"></div>
+          <div class="bd-row bold"><span>Total</span><span id="bd-total">0.0</span></div>
+        </div>
+        <div class="alerts-section" id="alerts-container"></div>
+        <div class="events-section"><div id="events-container"></div></div>
+      </div>
+      <div id="tab-week" class="tab-content">
+        <div class="header"><h1>Week Overview</h1></div>
+        <div id="week-overview">
+          <div class="week-chart-container"><div class="allowance-line"></div><div id="week-chart-cols" style="display:flex; width:100%;"></div></div>
+          <div class="rolling-avg-box"><div class="muted" style="font-size:0.85rem; font-weight:500;">7-Day Rolling Average</div><div class="rolling-avg-val mono bold" id="week-rolling-avg">0.0 pts</div></div>
+        </div>
+        <div class="day-detail-panel" id="day-detail-panel">
+          <button class="btn-back" onclick="hideDayDetail()"><svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;"><path d="M15 19l-7-7 7-7"/></svg> Back to Week</button>
+          <div class="header" style="margin-top:8px;"><h1 id="detail-date-label">Date</h1></div>
+          <div class="events-section"><div id="detail-events-container"></div></div>
+        </div>
+      </div>
+      <div id="tab-analytics" class="tab-content">
+        <div class="header"><h1>Analytics</h1></div>
+        <div class="period-toggles" id="analytics-toggles"><button class="toggle-btn" onclick="loadAnalytics('7days')">7 Days</button><button class="toggle-btn active" onclick="loadAnalytics('30days')">30 Days</button><button class="toggle-btn" onclick="loadAnalytics('90days')">90 Days</button></div>
+        <div class="loader-inline mono pulse-logo" id="analytics-loader">LOADING...</div>
+        <div id="analytics-content" style="display:none;"><div class="overload-card" id="analytics-overload"></div><div class="stats-grid"><div class="stat-card"><span class="stat-lbl">All Days Avg</span><span class="stat-val mono" id="stat-avg-all">0.0</span></div><div class="stat-card"><span class="stat-lbl">Work Days Avg</span><span class="stat-val mono" id="stat-avg-work">0.0</span></div><div class="stat-card"><span class="stat-lbl">Autonomous Avg</span><span class="stat-val mono" id="stat-avg-auto">0.0</span></div><div class="stat-card" style="border-left-color: var(--warning);"><span class="stat-lbl">Days Over Warning</span><span class="stat-val mono" id="stat-days-over">0</span></div><div class="stat-card" style="border-left-color: var(--safe);"><span class="stat-lbl">Best Day</span><span class="stat-val mono" id="stat-best-val">0.0</span><span class="stat-sub mono" id="stat-best-date">-</span></div><div class="stat-card" style="border-left-color: var(--critical);"><span class="stat-lbl">Worst Day</span><span class="stat-val mono" id="stat-worst-val">0.0</span><span class="stat-sub mono" id="stat-worst-date">-</span></div><div class="stat-card"><span class="stat-lbl">High Burn Hrs</span><span class="stat-val mono" id="stat-high-hrs">0.0</span></div><div class="stat-card"><span class="stat-lbl">Recovery Hrs</span><span class="stat-val mono" id="stat-rec-hrs">0.0</span></div></div><div class="distribution-card"><span class="stat-lbl">Tier Distribution</span><div class="dist-bar-container" id="dist-bar"></div><div class="stat-sub" id="dist-total-hrs" style="text-align:right; margin-top:8px;"></div></div></div>
+      </div>
+      <div id="tab-settings" class="tab-content">
+        <div class="header"><h1>Settings</h1></div>
+        <div id="settings-form">
+          <div class="section-title">Thresholds</div>
+          <div class="form-group"><label>Daily Allowance (Work)</label><input type="number" step="0.5" class="input-field" id="set-DailyAllowance_WorkDay"></div>
+          <div class="form-group"><label>Daily Allowance (Rest)</label><input type="number" step="0.5" class="input-field" id="set-DailyAllowance_RestDay"></div>
+          <div class="form-group"><label>Desk Baseline Points</label><input type="number" step="0.5" class="input-field" id="set-DeskBaseline_Points"></div>
+          <div class="form-group"><label>Safe Threshold</label><input type="number" step="0.5" class="input-field" id="set-Safe_Threshold"></div>
+          <div class="form-group"><label>Warning Threshold</label><input type="number" step="0.5" class="input-field" id="set-Warning_Threshold"></div>
+          <div class="section-title">Recovery Rules</div>
+          <div class="form-group"><label>Recovery Credit Cap</label><input type="number" step="0.5" max="0" class="input-field" id="set-RecoveryCreditCap"></div>
+          <div class="form-group"><label>Consecutive Penalty</label><label class="toggle-switch"><input type="checkbox" id="set-ConsecutivePenalty_Enabled" onchange="togglePenaltyFields()"><span class="slider"></span></label></div>
+          <div class="form-group"><label>Penalty Value (pts)</label><input type="number" step="0.5" class="input-field" id="set-ConsecutivePenalty_Value"></div>
+          <div class="form-group"><label>Gap Threshold (mins)</label><input type="number" step="1" class="input-field" id="set-ConsecutiveGap_Minutes"></div>
+          <div class="section-title">Time Windows</div>
+          <div class="form-group"><label>Wkdy Recovery Start</label><input type="time" step="900" class="input-field" id="set-Weekday_RecoveryWindow_Start"></div>
+          <div class="form-group"><label>Wkdy Recovery End</label><input type="time" step="900" class="input-field" id="set-Weekday_RecoveryWindow_End"></div>
+          <div class="form-group"><label>Wknd Recovery Start</label><input type="time" step="900" class="input-field" id="set-Weekend_RecoveryWindow_Start"></div>
+          <div class="form-group"><label>Wkdy Late Load</label><input type="time" step="900" class="input-field" id="set-Weekday_LateLoad_Threshold"></div>
+          <div class="form-group"><label>Wknd Late Load</label><input type="time" step="900" class="input-field" id="set-Weekend_LateLoad_Threshold"></div>
+        </div>
+        <button id="btn-save-settings" class="btn btn-primary" style="width:100%; margin-top:24px;" onclick="saveSettingsForm()">Save Settings</button>
+      </div>
+    </div>
+    
+    <div class="action-row" id="action-row" style="display:none;">
+      <button class="btn btn-primary" onclick="openModal('modal-add-event')"><svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;"><path d="M12 4v16m8-8H4"/></svg> Add Event</button>
+      <button class="btn btn-secondary" onclick="openModal('modal-manual-entry')"><svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg> Manual</button>
+    </div>
+    <nav id="bottom-nav">
+      <button class="nav-item active" onclick="switchTab('today')"><svg viewBox="0 0 24 24"><path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>Today</button>
+      <button class="nav-item" onclick="switchTab('week')"><svg viewBox="0 0 24 24"><path d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/></svg>Week</button>
+      <button class="nav-item" onclick="switchTab('analytics')"><svg viewBox="0 0 24 24"><path d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/></svg>Analytics</button>
+      <button class="nav-item" onclick="switchTab('settings')"><svg viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>Settings</button>
+    </nav>
+
+    <?!= include('Modals'); ?>
+  </div>
+
+  <?!= include('JavaScript'); ?>
+</body>
+</html>
