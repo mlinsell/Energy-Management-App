@@ -1,0 +1,112 @@
+<div id="modal-add-event" class="modal-overlay" onclick="handleBackdropClick(event, 'modal-add-event')">
+  <div class="modal-card">
+    <div class="modal-header"><h2>New Event</h2><button class="btn-close" onclick="closeModal('modal-add-event')">✕</button></div>
+    <div class="modal-form-group">
+      <label>Event Name</label>
+      <input type="text" class="modal-input" id="add-name" placeholder="What are you doing?">
+      <div class="error-text" id="err-add-name">Name is required</div>
+    </div>
+    <div class="modal-form-group"><label>Date</label><input type="date" class="modal-input" id="add-date"></div>
+    <div style="display:flex; gap:12px;">
+      <div class="modal-form-group" style="flex:1;"><label>Start Time</label><input type="time" step="900" class="modal-input" id="add-start"></div>
+      <div class="modal-form-group" style="flex:1;"><label>End Time</label><input type="time" step="900" class="modal-input" id="add-end"></div>
+    </div>
+    <div class="error-text" id="err-add-time" style="margin-top:-10px; margin-bottom:12px;">End time must be after start time</div>
+    <div class="modal-form-group">
+      <label>Burn Tier</label>
+      <div class="segmented-control">
+        <input type="radio" name="add-tier" id="tier-High" value="High" class="segment-radio"><label for="tier-High" class="segment-lbl">High</label>
+        <input type="radio" name="add-tier" id="tier-Medium" value="Medium" class="segment-radio"><label for="tier-Medium" class="segment-lbl">Medium</label>
+        <input type="radio" name="add-tier" id="tier-Low" value="Low" class="segment-radio"><label for="tier-Low" class="segment-lbl">Low</label>
+        <input type="radio" name="add-tier" id="tier-Desk" value="Desk" class="segment-radio"><label for="tier-Desk" class="segment-lbl">Desk</label>
+        <input type="radio" name="add-tier" id="tier-Recovery" value="Recovery" class="segment-radio"><label for="tier-Recovery" class="segment-lbl">Recovery</label>
+        <input type="radio" name="add-tier" id="tier-Neutral" value="Neutral" class="segment-radio"><label for="tier-Neutral" class="segment-lbl">Neutral</label>
+      </div>
+      <div class="error-text" id="err-add-tier">Please select a burn tier</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" style="border:none; box-shadow:none; background:none;" onclick="closeModal('modal-add-event')">Cancel</button>
+      <button class="btn btn-primary" id="btn-submit-add" onclick="submitAddEvent()">Add to Calendar</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-edit-event" class="modal-overlay" onclick="handleBackdropClick(event, 'modal-edit-event')">
+  <div class="modal-card">
+    <div class="modal-header"><h2>Edit Event</h2><button class="btn-close" onclick="closeModal('modal-edit-event')">✕</button></div>
+    <input type="hidden" id="edit-eventId">
+    <div class="modal-form-group">
+      <label>Event Name</label>
+      <input type="text" class="modal-input" id="edit-name">
+      <div class="error-text" id="err-edit-name">Name is required</div>
+    </div>
+    <div class="modal-form-group"><label>Date</label><input type="date" class="modal-input" id="edit-date"></div>
+    <div style="display:flex; gap:12px;">
+      <div class="modal-form-group" style="flex:1;"><label>Start Time</label><input type="time" step="900" class="modal-input" id="edit-start"></div>
+      <div class="modal-form-group" style="flex:1;"><label>End Time</label><input type="time" step="900" class="modal-input" id="edit-end"></div>
+    </div>
+    <div class="error-text" id="err-edit-time" style="margin-top:-10px; margin-bottom:12px;">End time must be after start time</div>
+    <div class="modal-form-group">
+      <label>Burn Tier</label>
+      <div class="segmented-control">
+        <input type="radio" name="edit-tier" id="edit-tier-High" value="High" class="segment-radio"><label for="edit-tier-High" class="segment-lbl">High</label>
+        <input type="radio" name="edit-tier" id="edit-tier-Medium" value="Medium" class="segment-radio"><label for="edit-tier-Medium" class="segment-lbl">Medium</label>
+        <input type="radio" name="edit-tier" id="edit-tier-Low" value="Low" class="segment-radio"><label for="edit-tier-Low" class="segment-lbl">Low</label>
+        <input type="radio" name="edit-tier" id="edit-tier-Desk" value="Desk" class="segment-radio"><label for="edit-tier-Desk" class="segment-lbl">Desk</label>
+        <input type="radio" name="edit-tier" id="edit-tier-Recovery" value="Recovery" class="segment-radio"><label for="edit-tier-Recovery" class="segment-lbl">Recovery</label>
+        <input type="radio" name="edit-tier" id="edit-tier-Neutral" value="Neutral" class="segment-radio"><label for="edit-tier-Neutral" class="segment-lbl">Neutral</label>
+      </div>
+      <div class="error-text" id="err-edit-tier">Please select a burn tier</div>
+    </div>
+    
+    <div class="modal-footer" id="edit-footer-default">
+      <button class="btn btn-secondary" style="border:none; box-shadow:none; background:none; color:var(--critical); flex:0.5; text-align:left; justify-content:flex-start;" id="btn-edit-delete" onclick="showDeleteConfirm()">Delete</button>
+      <button class="btn btn-secondary" style="border:none; box-shadow:none; background:none;" onclick="closeModal('modal-edit-event')">Cancel</button>
+      <button class="btn btn-primary" id="btn-submit-edit" onclick="submitEditEvent()">Save Changes</button>
+    </div>
+    
+    <div class="modal-footer" id="edit-footer-confirm" style="display:none; justify-content:space-between; align-items:center;">
+      <div style="font-size:0.8rem; color:var(--text-muted); max-width:50%;">Are you sure? Removes from calendar.</div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-secondary" style="border:none; box-shadow:none; background:none;" onclick="hideDeleteConfirm()">Cancel</button>
+        <button class="btn btn-primary" style="background:var(--critical);" id="btn-confirm-delete" onclick="submitDeleteEvent()">Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="modal-manual-entry" class="modal-overlay" onclick="handleBackdropClick(event, 'modal-manual-entry')">
+  <div class="modal-card">
+    <div class="modal-header"><h2>Log Unscheduled Event</h2><button class="btn-close" onclick="closeModal('modal-manual-entry')">✕</button></div>
+    <div class="modal-form-group">
+      <label>Event Name</label>
+      <input type="text" class="modal-input" id="man-name" placeholder="What did you do?">
+      <div class="error-text" id="err-man-name">Name is required</div>
+    </div>
+    <div class="modal-form-group">
+      <label>Date</label>
+      <div class="modal-input muted" id="man-date-label" style="background:var(--bg); border:none; padding-left:0; box-shadow:none;">Today</div>
+    </div>
+    <div style="display:flex; gap:12px;">
+      <div class="modal-form-group" style="flex:1;"><label>Start Time</label><input type="time" step="900" class="modal-input" id="man-start"></div>
+      <div class="modal-form-group" style="flex:1;"><label>End Time</label><input type="time" step="900" class="modal-input" id="man-end"></div>
+    </div>
+    <div class="error-text" id="err-man-time" style="margin-top:-10px; margin-bottom:12px;">End time must be after start time</div>
+    <div class="modal-form-group">
+      <label>Burn Tier</label>
+      <div class="segmented-control">
+        <input type="radio" name="man-tier" id="man-tier-High" value="High" class="segment-radio"><label for="man-tier-High" class="segment-lbl">High</label>
+        <input type="radio" name="man-tier" id="man-tier-Medium" value="Medium" class="segment-radio"><label for="man-tier-Medium" class="segment-lbl">Medium</label>
+        <input type="radio" name="man-tier" id="man-tier-Low" value="Low" class="segment-radio"><label for="man-tier-Low" class="segment-lbl">Low</label>
+        <input type="radio" name="man-tier" id="man-tier-Desk" value="Desk" class="segment-radio"><label for="man-tier-Desk" class="segment-lbl">Desk</label>
+        <input type="radio" name="man-tier" id="man-tier-Recovery" value="Recovery" class="segment-radio"><label for="man-tier-Recovery" class="segment-lbl">Recovery</label>
+        <input type="radio" name="man-tier" id="man-tier-Neutral" value="Neutral" class="segment-radio"><label for="man-tier-Neutral" class="segment-lbl">Neutral</label>
+      </div>
+      <div class="error-text" id="err-man-tier">Please select a burn tier</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" style="border:none; box-shadow:none; background:none;" onclick="closeModal('modal-manual-entry')">Cancel</button>
+      <button class="btn btn-primary" id="btn-submit-man" onclick="submitManualEvent()">Add to Log</button>
+    </div>
+  </div>
+</div>
