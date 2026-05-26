@@ -1,0 +1,650 @@
+<script>
+  // --- STATE MANAGEMENT ---
+  const state = {
+    appData: null,
+    activeTab: 'today',
+    todayDate: null,
+    analyticsCache: {},
+    editingEvent: null
+  };
+
+  // --- INITIALIZATION ---
+  window.addEventListener('DOMContentLoaded', init);
+
+  function init() {
+    document.getElementById('error-screen').style.display = 'none';
+    document.getElementById('loading-screen').style.display = 'flex';
+    document.getElementById('main').style.display = 'none';
+    document.getElementById('action-row').style.display = 'none';
+    
+    google.script.run
+      .withSuccessHandler(onAppDataLoaded)
+      .withFailureHandler(onError)
+      .getAppData();
+  }
+
+  function onAppDataLoaded(res) {
+    if (!res || !res.success) {
+      onError(res ? res.message : 'Unknown load error');
+      return;
+    }
+    state.appData = res;
+    state.todayDate = res.today.date;
+    
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('main').style.display = 'block';
+    document.getElementById('action-row').style.display = 'flex';
+    
+    renderToday();
+  }
+
+  function onError(message) {
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('error-screen').style.display = 'flex';
+    document.getElementById('error-msg').innerText = message;
+  }
+
+  function refreshToday() {
+    document.getElementById('gauge-status').innerText = 'UPDATING...';
+    document.getElementById('gauge-fill').style.backgroundColor = 'var(--neutral)';
+    
+    google.script.run
+      .withSuccessHandler(res => {
+        if(res.success) { state.appData = res; renderToday(); }
+        else { showToast('Refresh failed: ' + res.message, 'error'); }
+      })
+      .withFailureHandler(err => showToast(err.message, 'error'))
+      .getAppData();
+  }
+
+  // --- NAVIGATION LOGIC ---
+  function switchTab(tabName) {
+    if (state.activeTab === tabName) return;
+    state.activeTab = tabName;
+    
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.getElementById(`tab-${tabName}`).classList.add('active');
+    
+    const navItems = document.querySelectorAll('.nav-item');
+    navItems.forEach(el => el.classList.remove('active'));
+    
+    const idx = ['today', 'week', 'analytics', 'settings'].indexOf(tabName);
+    if (idx !== -1) navItems[idx].classList.add('active');
+    
+    document.getElementById('action-row').style.display = (tabName === 'today') ? 'flex' : 'none';
+
+    if (tabName === 'week') {
+      hideDayDetail();
+      if (state.appData) renderWeek();
+    }
+    
+    if (tabName === 'analytics') {
+      if (!state.analyticsCache['30days']) loadAnalytics('30days');
+    }
+
+    if (tabName === 'settings' && state.appData && state.appData.settings) {
+      renderSettings();
+    }
+  }
+
+  // --- TODAY TAB LOGIC ---
+  function renderToday() {
+    const { today } = state.appData;
+    const t = today.totals;
+    
+    const dateParts = today.date.split('-');
+    const dObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+    const dateString = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }).format(dObj);
+    document.getElementById('today-date-label').innerText = dateString;
+    
+    const badgeBtn = document.getElementById('day-badge-btn');
+    badgeBtn.innerText = today.dayType.replace('-', ' ').toUpperCase();
+    
+    document.getElementById('gauge-current').innerText = t.totalPoints.toFixed(1);
+    document.getElementById('gauge-allowance').innerText = `/ ${t.allowance.toFixed(1)}`;
+    
+    const pct = Math.min((t.totalPoints / t.allowance) * 100, 100) || 0;
+    const fillEl = document.getElementById('gauge-fill');
+    fillEl.style.width = `${pct}%`;
+    
+    const statLabel = document.getElementById('gauge-status');
+    statLabel.innerText = t.status.toUpperCase();
+    
+    let statusColor = 'var(--safe)';
+    if(t.status === 'warning') statusColor = 'var(--warning)';
+    if(t.status === 'critical') statusColor = 'var(--critical)';
+    
+    fillEl.style.backgroundColor = statusColor;
+    statLabel.style.color = statusColor;
+
+    document.getElementById('bd-events').innerText = t.eventPoints > 0 ? `+${t.eventPoints.toFixed(1)}` : '0.0';
+    document.getElementById('bd-baseline').parentElement.style.display = 'none'; 
+    document.getElementById('bd-recovery').innerText = t.recoveryCredit < 0 ? t.recoveryCredit.toFixed(1) : '0.0';
+    document.getElementById('bd-penalties').innerText = t.penalties > 0 ? `+${t.penalties.toFixed(1)}` : '0.0';
+    document.getElementById('bd-total').innerText = `${t.totalPoints.toFixed(1)} / ${t.allowance.toFixed(1)}`;
+
+    // Filter out unclassified alerts
+    const activeAlerts = today.alerts ? today.alerts.filter(al => al.type !== 'unclassified') : [];
+    const alertCont = document.getElementById('alerts-container');
+    alertCont.innerHTML = '';
+    if (activeAlerts.length > 0) {
+      alertCont.style.display = 'block';
+      activeAlerts.forEach(al => {
+        const div = document.createElement('div');
+        div.className = `alert-card type-${al.type}`;
+        div.innerText = al.message; 
+        alertCont.appendChild(div);
+      });
+    } else {
+      alertCont.style.display = 'none';
+    }
+
+    const evCont = document.getElementById('events-container');
+    evCont.innerHTML = '';
+    
+    if (today.events.length === 0) {
+      evCont.innerHTML = '<p class="muted" style="font-size:0.85rem;text-align:center;padding:20px 0;">No events logged today</p>';
+    } else {
+      today.events.forEach((ev, index) => {
+        let tierClass = 'tier-Neutral';
+        if (ev.BurnTier.includes('High')) tierClass = 'tier-High';
+        if (ev.BurnTier.includes('Medium')) tierClass = 'tier-Medium';
+        if (ev.BurnTier.includes('Low')) tierClass = 'tier-Low';
+        if (ev.BurnTier.includes('Desk')) tierClass = 'tier-Desk';
+        if (ev.BurnTier.includes('Recovery')) tierClass = 'tier-Recovery';
+
+        const ptsVal = parseFloat(ev.Points) || 0;
+        let ptsText = ptsVal.toFixed(1);
+        let ptsColorClass = '';
+        
+        if (ptsVal === 0) { ptsColorClass = 'muted'; }
+        else if (ptsVal < 0) { ptsColorClass = 'text-recovery'; }
+        else { ptsText = `+${ptsText}`; }
+
+        const div = document.createElement('div');
+        div.className = `event-card ${tierClass}`;
+        div.onclick = () => openEditModal(index);
+        
+        div.innerHTML = `
+          <div class="event-info">
+            <h3>${ev.EventName}</h3>
+            <div class="event-meta muted mono">${ev.StartTime} – ${ev.EndTime} · ${ev.Duration_Min}m</div>
+          </div>
+          <div class="event-pts mono ${ptsColorClass}">${ptsText}</div>
+        `;
+        evCont.appendChild(div);
+      });
+    }
+  }
+
+  function triggerSync() {
+    const icon = document.getElementById('sync-icon');
+    icon.classList.add('spin');
+    google.script.run
+      .withSuccessHandler(res => {
+        icon.classList.remove('spin');
+        if (res.success) { showToast('Sync complete', 'success'); refreshToday(); }
+        else { showToast(res.message, 'error'); }
+      })
+      .withFailureHandler(err => { icon.classList.remove('spin'); showToast(err.message, 'error'); })
+      .syncCalendar(2);
+  }
+
+  function toggleDropdown() { document.getElementById('day-dropdown').classList.toggle('show'); }
+  
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.badge-container')) document.getElementById('day-dropdown').classList.remove('show');
+  });
+
+  function overrideDay(type) {
+    document.getElementById('day-dropdown').classList.remove('show');
+    showToast('Updating day type...', 'info');
+    google.script.run
+      .withSuccessHandler(res => refreshToday())
+      .withFailureHandler(err => showToast(err.message, 'error'))
+      .setDayOverride(state.todayDate, type);
+  }
+
+  function toggleBreakdown() {
+    const panel = document.getElementById('breakdown-panel');
+    const icon = document.getElementById('bd-icon');
+    if (panel.classList.contains('expanded')) { panel.classList.remove('expanded'); icon.innerText = '▾'; } 
+    else { panel.classList.add('expanded'); icon.innerText = '▴'; }
+  }
+
+  // --- WEEK TAB LOGIC (CARD LIST VIEW) ---
+  function renderWeek() {
+    const days = state.appData.week.days;
+    const chartCont = document.getElementById('week-chart-cols'); 
+    chartCont.innerHTML = '<div class="week-list" id="week-list" style="width:100%;"></div>';
+    const listCont = document.getElementById('week-list');
+    
+    let sumPts = 0, validDays = 0;
+
+    days.forEach(day => {
+      const dObj = new Date(day.date.split('-')[0], day.date.split('-')[1]-1, day.date.split('-')[2]);
+      const dayName = new Intl.DateTimeFormat('en-GB', { weekday: 'long' }).format(dObj);
+      const dateShort = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }).format(dObj);
+      
+      let statusColor = 'var(--safe)';
+      if(day.status === 'warning') statusColor = 'var(--warning)';
+      if(day.status === 'critical') statusColor = 'var(--critical)';
+
+      const item = document.createElement('div');
+      item.className = 'week-item';
+      item.onclick = () => showDayDetail(day.date);
+      
+      item.innerHTML = `
+        <div class="week-item-left">
+          <div class="week-item-date">${dateShort}</div>
+          <div class="week-item-info">
+            <span class="week-item-day">${dayName}</span>
+            <span style="font-size:0.7rem; color:var(--text-muted)">${day.dayType.toUpperCase()}</span>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:16px;">
+          <span class="week-item-pts mono">${day.totalPoints.toFixed(1)}</span>
+          <div class="status-dot" style="background:${statusColor}"></div>
+        </div>
+      `;
+      listCont.appendChild(item);
+
+      if (day.totalPoints > 0 || day.date <= state.todayDate) { sumPts += day.totalPoints; validDays++; }
+    });
+
+    document.getElementById('week-rolling-avg').innerText = `${validDays > 0 ? (sumPts / validDays).toFixed(1) : '0.0'} pts`;
+  }
+
+  function showDayDetail(dateString) {
+    document.getElementById('week-overview').style.display = 'none';
+    document.getElementById('day-detail-panel').classList.add('active');
+    document.getElementById('detail-date-label').innerText = dateString;
+    document.getElementById('detail-events-container').innerHTML = '<p class="muted mono pulse-logo" style="text-align:center; padding:20px;">LOADING...</p>';
+    
+    google.script.run
+      .withSuccessHandler(events => {
+        const cont = document.getElementById('detail-events-container');
+        cont.innerHTML = '';
+        if (events.length === 0) {
+          cont.innerHTML = '<p class="muted" style="font-size:0.85rem;text-align:center;padding:20px 0;">No events found</p>';
+          return;
+        }
+        events.forEach(ev => {
+          let tierClass = 'tier-Neutral';
+          if (ev.BurnTier.includes('High')) tierClass = 'tier-High';
+          if (ev.BurnTier.includes('Medium')) tierClass = 'tier-Medium';
+          if (ev.BurnTier.includes('Low')) tierClass = 'tier-Low';
+          if (ev.BurnTier.includes('Desk')) tierClass = 'tier-Desk';
+          if (ev.BurnTier.includes('Recovery')) tierClass = 'tier-Recovery';
+
+          const ptsVal = parseFloat(ev.Points) || 0;
+          let ptsColorClass = ptsVal === 0 ? 'muted' : (ptsVal < 0 ? 'text-recovery' : '');
+          
+          const div = document.createElement('div');
+          div.className = `event-card ${tierClass}`;
+          div.style.cursor = 'default';
+          div.innerHTML = `
+            <div class="event-info"><h3>${ev.EventName}</h3><div class="event-meta muted mono">${ev.StartTime} – ${ev.EndTime} · ${ev.Duration_Min}m</div></div>
+            <div class="event-pts mono ${ptsColorClass}">${ptsVal.toFixed(1)}</div>
+          `;
+          cont.appendChild(div);
+        });
+      })
+      .withFailureHandler(err => showToast(err.message, 'error'))
+      .getEventsForDate(dateString);
+  }
+
+  function hideDayDetail() {
+    document.getElementById('day-detail-panel').classList.remove('active');
+    document.getElementById('week-overview').style.display = 'block';
+  }
+
+  // --- ANALYTICS TAB LOGIC ---
+  function loadAnalytics(period) {
+    document.querySelectorAll('#analytics-toggles .toggle-btn').forEach(b => b.classList.remove('active'));
+    if(event && event.target) event.target.classList.add('active');
+    
+    if (state.analyticsCache[period]) { renderAnalytics(state.analyticsCache[period]); return; }
+
+    document.getElementById('analytics-content').style.display = 'none';
+    document.getElementById('analytics-loader').style.display = 'block';
+
+    google.script.run
+      .withSuccessHandler(res => {
+        if(res.success) { state.analyticsCache[period] = res; renderAnalytics(res); } 
+        else { showToast(res.message, 'error'); document.getElementById('analytics-loader').style.display = 'none'; }
+      })
+      .withFailureHandler(err => { showToast(err.message, 'error'); document.getElementById('analytics-loader').style.display = 'none'; })
+      .getAnalyticsData(period);
+  }
+
+  function renderAnalytics(data) {
+    document.getElementById('analytics-loader').style.display = 'none';
+    document.getElementById('analytics-content').style.display = 'block';
+
+    document.getElementById('stat-avg-all').innerText = data.avgAll.toFixed(1);
+    document.getElementById('stat-avg-work').innerText = data.avgWorkDays.toFixed(1);
+    document.getElementById('stat-avg-auto').innerText = data.avgAutonomousDays.toFixed(1);
+    document.getElementById('stat-days-over').innerText = data.daysOverWarning;
+    
+    document.getElementById('stat-best-val').innerText = data.minDay.points !== 999 ? data.minDay.points.toFixed(1) : '-';
+    document.getElementById('stat-best-date').innerText = data.minDay.points !== 999 ? data.minDay.date : '-';
+    
+    document.getElementById('stat-worst-val').innerText = data.maxDay.points.toFixed(1);
+    document.getElementById('stat-worst-date').innerText = data.maxDay.date;
+    
+    document.getElementById('stat-high-hrs').innerText = (data.totalHighBurnMins / 60).toFixed(1);
+    document.getElementById('stat-rec-hrs').innerText = (data.totalRecoveryMins / 60).toFixed(1);
+
+    const overloadCard = document.getElementById('analytics-overload');
+    if (data.consecutiveOverloadStreaks > 0) {
+      overloadCard.className = 'overload-card overload-active';
+      overloadCard.innerHTML = `⚠ ${data.consecutiveOverloadStreaks} consecutive overload streak(s) detected`;
+    } else {
+      overloadCard.className = 'overload-card muted';
+      overloadCard.innerHTML = `No consecutive overload streaks in this period`;
+    }
+
+    const dist = data.tierDistribution;
+    const totalMins = dist.highBurnMins + dist.mediumBurnMins + dist.lowBurnMins + dist.recoveryMins + dist.neutralMins;
+    const distBar = document.getElementById('dist-bar');
+    distBar.innerHTML = '';
+    
+    document.getElementById('dist-total-hrs').innerText = `Total tracked: ${(totalMins / 60).toFixed(1)} hrs`;
+
+    if (totalMins > 0) {
+      const segments = [
+        { key: 'high', val: dist.highBurnMins, col: 'var(--high-burn)' },
+        { key: 'med', val: dist.mediumBurnMins, col: 'var(--med-burn)' },
+        { key: 'low', val: dist.lowBurnMins, col: 'var(--low-burn)' },
+        { key: 'rec', val: dist.recoveryMins, col: 'var(--recovery)' },
+        { key: 'neu', val: dist.neutralMins, col: 'var(--tier-neutral)' }
+      ];
+
+      segments.forEach(seg => {
+        if (seg.val > 0) {
+          const pct = (seg.val / totalMins) * 100;
+          const div = document.createElement('div');
+          div.className = 'dist-segment';
+          div.style.width = `${pct}%`;
+          div.style.backgroundColor = seg.col;
+          if (pct >= 5) div.innerHTML = `<span class="dist-label">${pct.toFixed(0)}%</span>`;
+          distBar.appendChild(div);
+        }
+      });
+    }
+  }
+
+  // --- SETTINGS TAB LOGIC ---
+  function renderSettings() {
+    const s = state.appData.settings;
+    const keys = [
+      'DailyAllowance_WorkDay', 'DailyAllowance_RestDay', 'DeskBaseline_Points', 'Safe_Threshold', 'Warning_Threshold', 
+      'RecoveryCreditCap', 'ConsecutivePenalty_Value', 'ConsecutiveGap_Minutes',
+      'Weekday_RecoveryWindow_Start', 'Weekday_RecoveryWindow_End', 'Weekend_RecoveryWindow_Start', 
+      'Weekday_LateLoad_Threshold', 'Weekend_LateLoad_Threshold'
+    ];
+    
+    keys.forEach(k => { const el = document.getElementById(`set-${k}`); if (el) el.value = s[k]; });
+
+    const penaltyToggle = document.getElementById('set-ConsecutivePenalty_Enabled');
+    penaltyToggle.checked = String(s.ConsecutivePenalty_Enabled).toUpperCase() === 'TRUE';
+    togglePenaltyFields();
+  }
+
+  function togglePenaltyFields() {
+    const isOn = document.getElementById('set-ConsecutivePenalty_Enabled').checked;
+    document.getElementById('set-ConsecutivePenalty_Value').disabled = !isOn;
+    document.getElementById('set-ConsecutiveGap_Minutes').disabled = !isOn;
+  }
+
+  function saveSettingsForm() {
+    const btn = document.getElementById('btn-save-settings');
+    btn.innerText = 'Saving...';
+    btn.disabled = true;
+
+    const keys = [
+      'DailyAllowance_WorkDay', 'DailyAllowance_RestDay', 'DeskBaseline_Points', 'Safe_Threshold', 'Warning_Threshold', 
+      'RecoveryCreditCap', 'ConsecutivePenalty_Value', 'ConsecutiveGap_Minutes',
+      'Weekday_RecoveryWindow_Start', 'Weekday_RecoveryWindow_End', 'Weekend_RecoveryWindow_Start', 
+      'Weekday_LateLoad_Threshold', 'Weekend_LateLoad_Threshold'
+    ];
+
+    const settingsObj = {};
+    keys.forEach(k => { settingsObj[k] = document.getElementById(`set-${k}`).value; });
+    settingsObj.ConsecutivePenalty_Enabled = document.getElementById('set-ConsecutivePenalty_Enabled').checked ? 'TRUE' : 'FALSE';
+
+    google.script.run
+      .withSuccessHandler(res => {
+        btn.innerText = 'Save Settings';
+        btn.disabled = false;
+        if (res.success) {
+          state.appData.settings = { ...state.appData.settings, ...settingsObj };
+          showToast('Settings saved', 'success');
+          refreshToday(); 
+        } else showToast('Save failed: ' + res.message, 'error');
+      })
+      .withFailureHandler(err => { btn.innerText = 'Save Settings'; btn.disabled = false; showToast(err.message, 'error'); })
+      .saveSettings(settingsObj);
+  }
+
+  // --- MODAL SHARED LOGIC ---
+  function handleBackdropClick(e, modalId) { if (e.target.id === modalId) closeModal(modalId); }
+  function closeModal(modalId) { document.getElementById(modalId).classList.remove('active'); }
+  function validateTimes(startStr, endStr) {
+    if (!startStr || !endStr) return false;
+    const [h1, m1] = startStr.split(':').map(Number);
+    const [h2, m2] = endStr.split(':').map(Number);
+    return (h2 * 60 + m2) > (h1 * 60 + m1);
+  }
+  function getFullTierName(shortName) {
+    if (shortName === 'High' || shortName === 'Medium' || shortName === 'Low') return `${shortName} Burn`;
+    return shortName;
+  }
+
+  function openModal(modalId) {
+    const getSnappedTime = (date) => {
+      const ms = 1000 * 60 * 15;
+      return new Date(Math.round(date.getTime() / ms) * ms);
+    };
+
+    if (modalId === 'modal-add-event') {
+      document.getElementById('add-name').value = '';
+      document.getElementById('add-date').value = state.todayDate;
+      
+      const snappedNow = getSnappedTime(new Date());
+      document.getElementById('add-start').value = snappedNow.toTimeString().slice(0,5);
+      snappedNow.setHours(snappedNow.getHours() + 1);
+      document.getElementById('add-end').value = snappedNow.toTimeString().slice(0,5);
+      
+      document.querySelectorAll('input[name="add-tier"]').forEach(r => r.checked = false);
+      document.getElementById('err-add-name').style.display = 'none';
+      document.getElementById('err-add-time').style.display = 'none';
+      document.getElementById('err-add-tier').style.display = 'none';
+      
+    } else if (modalId === 'modal-manual-entry') {
+      document.getElementById('man-name').value = '';
+      document.getElementById('man-date-label').innerText = state.todayDate;
+      
+      const snappedNow = getSnappedTime(new Date());
+      document.getElementById('man-start').value = snappedNow.toTimeString().slice(0,5);
+      snappedNow.setHours(snappedNow.getHours() + 1);
+      document.getElementById('man-end').value = snappedNow.toTimeString().slice(0,5);
+      
+      document.querySelectorAll('input[name="man-tier"]').forEach(r => r.checked = false);
+      document.getElementById('err-man-name').style.display = 'none';
+      document.getElementById('err-man-time').style.display = 'none';
+      document.getElementById('err-man-tier').style.display = 'none';
+    }
+    document.getElementById(modalId).classList.add('active');
+  }
+
+  // --- ADD EVENT LOGIC ---
+  function submitAddEvent() {
+    const title = document.getElementById('add-name').value.trim();
+    const date = document.getElementById('add-date').value;
+    const start = document.getElementById('add-start').value;
+    const end = document.getElementById('add-end').value;
+    const tierRadio = document.querySelector('input[name="add-tier"]:checked');
+
+    let valid = true;
+    if (!title) { document.getElementById('err-add-name').style.display = 'block'; valid = false; } else document.getElementById('err-add-name').style.display = 'none';
+    if (!validateTimes(start, end)) { document.getElementById('err-add-time').style.display = 'block'; valid = false; } else document.getElementById('err-add-time').style.display = 'none';
+    if (!tierRadio) { document.getElementById('err-add-tier').style.display = 'block'; valid = false; } else document.getElementById('err-add-tier').style.display = 'none';
+
+    if (!valid) return;
+
+    const tierShort = tierRadio.value;
+    const btn = document.getElementById('btn-submit-add');
+    btn.innerText = 'Adding...';
+    btn.disabled = true;
+
+    google.script.run
+      .withSuccessHandler(res => {
+        btn.innerText = 'Add to Calendar';
+        btn.disabled = false;
+        if(res.success) { closeModal('modal-add-event'); showToast('Event added', 'success'); refreshToday(); } 
+        else showToast('Failed: ' + res.message, 'error');
+      })
+      .withFailureHandler(err => { btn.innerText = 'Add to Calendar'; btn.disabled = false; showToast(err.message, 'error'); })
+      .createCalendarEvent(title, date, start, end, getFullTierName(tierShort));
+  }
+
+  // --- EDIT / DELETE EVENT LOGIC ---
+  function openEditModal(eventIndex) {
+    const ev = state.appData.today.events[eventIndex];
+    state.editingEvent = ev; 
+
+    document.getElementById('edit-eventId').value = ev.CalendarEventID || '';
+    document.getElementById('edit-name').value = ev.EventName;
+    document.getElementById('edit-date').value = ev.Date || state.todayDate;
+    document.getElementById('edit-start').value = ev.StartTime;
+    document.getElementById('edit-end').value = ev.EndTime;
+    
+    let tierShort = ev.BurnTier.split(' ')[0];
+    if (document.getElementById(`edit-tier-${tierShort}`)) document.getElementById(`edit-tier-${tierShort}`).checked = true;
+    else document.getElementById('edit-tier-Neutral').checked = true;
+
+    document.getElementById('err-edit-name').style.display = 'none';
+    document.getElementById('err-edit-time').style.display = 'none';
+    document.getElementById('err-edit-tier').style.display = 'none';
+    
+    hideDeleteConfirm();
+    document.getElementById('btn-edit-delete').style.display = 'block'; 
+    document.getElementById('modal-edit-event').classList.add('active');
+  }
+
+  function submitEditEvent() {
+    const id = document.getElementById('edit-eventId').value;
+    if (!id) { showToast('Legacy manual entries cannot be edited', 'info'); return; }
+
+    const title = document.getElementById('edit-name').value.trim();
+    const date = document.getElementById('edit-date').value;
+    const start = document.getElementById('edit-start').value;
+    const end = document.getElementById('edit-end').value;
+    const tierRadio = document.querySelector('input[name="edit-tier"]:checked');
+
+    let valid = true;
+    if (!title) { document.getElementById('err-edit-name').style.display = 'block'; valid = false; } else document.getElementById('err-edit-name').style.display = 'none';
+    if (!validateTimes(start, end)) { document.getElementById('err-edit-time').style.display = 'block'; valid = false; } else document.getElementById('err-edit-time').style.display = 'none';
+    if (!tierRadio) { document.getElementById('err-edit-tier').style.display = 'block'; valid = false; } else document.getElementById('err-edit-tier').style.display = 'none';
+
+    if (!valid) return;
+
+    const tierShort = tierRadio.value;
+    const btn = document.getElementById('btn-submit-edit');
+    btn.innerText = 'Saving...';
+    btn.disabled = true;
+
+    google.script.run
+      .withSuccessHandler(res => {
+        btn.innerText = 'Save Changes';
+        btn.disabled = false;
+        if(res.success) { closeModal('modal-edit-event'); showToast('Event updated', 'success'); refreshToday(); } 
+        else showToast('Failed: ' + res.message, 'error');
+      })
+      .withFailureHandler(err => { btn.innerText = 'Save Changes'; btn.disabled = false; showToast(err.message, 'error'); })
+      .updateCalendarEvent(id, title, date, start, end, getFullTierName(tierShort));
+  }
+
+  function showDeleteConfirm() {
+    document.getElementById('edit-footer-default').style.display = 'none';
+    document.getElementById('edit-footer-confirm').style.display = 'flex';
+  }
+
+  function hideDeleteConfirm() {
+    document.getElementById('edit-footer-default').style.display = 'flex';
+    document.getElementById('edit-footer-confirm').style.display = 'none';
+  }
+
+  function submitDeleteEvent() {
+    const id = state.editingEvent.CalendarEventID;
+    if (!id) return;
+    
+    // Pass the specific date of the event so the backend targets the exact baseline instance
+    const dateStr = state.editingEvent.Date || state.todayDate;
+    
+    const btn = document.getElementById('btn-confirm-delete');
+    btn.innerText = '...';
+    btn.disabled = true;
+
+    google.script.run
+      .withSuccessHandler(res => {
+        btn.innerText = 'Confirm';
+        btn.disabled = false;
+        if (res.success) { closeModal('modal-edit-event'); showToast('Event deleted', 'success'); refreshToday(); } 
+        else showToast('Failed: ' + res.message, 'error');
+      })
+      .withFailureHandler(err => { btn.innerText = 'Confirm'; btn.disabled = false; showToast(err.message, 'error'); })
+      .deleteCalendarEvent(id, dateStr);
+  }
+
+  // --- MANUAL ENTRY LOGIC ---
+  function submitManualEvent() {
+    const title = document.getElementById('man-name').value.trim();
+    const start = document.getElementById('man-start').value;
+    const end = document.getElementById('man-end').value;
+    const tierRadio = document.querySelector('input[name="man-tier"]:checked');
+
+    let valid = true;
+    if (!title) { document.getElementById('err-man-name').style.display = 'block'; valid = false; } else document.getElementById('err-man-name').style.display = 'none';
+    if (!validateTimes(start, end)) { document.getElementById('err-man-time').style.display = 'block'; valid = false; } else document.getElementById('err-man-time').style.display = 'none';
+    if (!tierRadio) { document.getElementById('err-man-tier').style.display = 'block'; valid = false; } else document.getElementById('err-man-tier').style.display = 'none';
+
+    if (!valid) return;
+
+    const tierShort = tierRadio.value;
+    const btn = document.getElementById('btn-submit-man');
+    btn.innerText = 'Adding...';
+    btn.disabled = true;
+
+    const entryObject = { eventName: title, dateString: state.todayDate, startTime: start, endTime: end, burnTierName: getFullTierName(tierShort) };
+
+    google.script.run
+      .withSuccessHandler(res => {
+        btn.innerText = 'Add to Log';
+        btn.disabled = false;
+        if(res.success) { closeModal('modal-manual-entry'); showToast('Logged manually', 'success'); refreshToday(); } 
+        else showToast('Failed: ' + res.message, 'error');
+      })
+      .withFailureHandler(err => { btn.innerText = 'Add to Log'; btn.disabled = false; showToast(err.message, 'error'); })
+      .addManualEntry(entryObject);
+  }
+
+  // --- UTILITIES ---
+  function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerText = message;
+    container.appendChild(toast);
+    
+    void toast.offsetWidth;
+    toast.classList.add('show');
+    
+    setTimeout(() => {
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), 300);
+    }, 3000);
+  }
+</script>
