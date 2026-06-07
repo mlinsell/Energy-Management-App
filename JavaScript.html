@@ -5,7 +5,8 @@
     activeTab: 'today',
     todayDate: null,
     analyticsCache: {},
-    editingEvent: null
+    editingEvent: null,
+    detailEvents: [] 
   };
 
   // --- INITIALIZATION ---
@@ -50,7 +51,18 @@
     
     google.script.run
       .withSuccessHandler(res => {
-        if(res.success) { state.appData = res; renderToday(); }
+        if(res.success) { 
+          state.appData = res; 
+          renderToday(); 
+          
+          if (state.activeTab === 'week') {
+            renderWeek();
+            if (document.getElementById('day-detail-panel').classList.contains('active')) {
+              const detailDate = document.getElementById('detail-date-label').innerText;
+              showDayDetail(detailDate);
+            }
+          }
+        }
         else { showToast('Refresh failed: ' + res.message, 'error'); }
       })
       .withFailureHandler(err => showToast(err.message, 'error'))
@@ -85,6 +97,30 @@
     if (tabName === 'settings' && state.appData && state.appData.settings) {
       renderSettings();
     }
+  }
+
+  // --- TICK BOX HANDLER ---
+  function toggleCompletion(index, isDetail, checkboxEl) {
+    const ev = isDetail ? state.detailEvents[index] : state.appData.today.events[index];
+    const isCompleted = checkboxEl.checked;
+    const targetDate = ev.Date || (isDetail ? document.getElementById('detail-date-label').innerText : state.todayDate);
+
+    // Optimistically update the UI to prevent lag feeling
+    ev.Completed = isCompleted;
+    const card = checkboxEl.closest('.event-card');
+    if (isCompleted) card.classList.add('completed');
+    else card.classList.remove('completed');
+
+    google.script.run
+      .withFailureHandler(err => {
+        showToast(err.message, 'error');
+        // Revert UI on failure
+        checkboxEl.checked = !isCompleted;
+        ev.Completed = !isCompleted;
+        if (!isCompleted) card.classList.add('completed');
+        else card.classList.remove('completed');
+      })
+      .toggleEventCompletion(ev.CalendarEventID || '', ev.EventName, ev.StartTime, targetDate, isCompleted);
   }
 
   // --- TODAY TAB LOGIC ---
@@ -123,8 +159,7 @@
     document.getElementById('bd-penalties').innerText = t.penalties > 0 ? `+${t.penalties.toFixed(1)}` : '0.0';
     document.getElementById('bd-total').innerText = `${t.totalPoints.toFixed(1)} / ${t.allowance.toFixed(1)}`;
 
-    // Filter out unclassified alerts
-    const activeAlerts = today.alerts ? today.alerts.filter(al => al.type !== 'unclassified') : [];
+    const activeAlerts = today.alerts || [];
     const alertCont = document.getElementById('alerts-container');
     alertCont.innerHTML = '';
     if (activeAlerts.length > 0) {
@@ -161,16 +196,28 @@
         else if (ptsVal < 0) { ptsColorClass = 'text-recovery'; }
         else { ptsText = `+${ptsText}`; }
 
+        const isCompleted = ev.Completed === true || String(ev.Completed).toUpperCase() === 'TRUE';
+        const completedClass = isCompleted ? 'completed' : '';
+
         const div = document.createElement('div');
-        div.className = `event-card ${tierClass}`;
-        div.onclick = () => openEditModal(index);
+        div.className = `event-card ${tierClass} ${completedClass}`;
+        
+        // Prevent opening edit modal when clicking the checkbox
+        div.onclick = (e) => {
+          if (!e.target.closest('.checkbox-wrapper')) openEditModal(index, false);
+        };
         
         div.innerHTML = `
-          <div class="event-info">
-            <h3>${ev.EventName}</h3>
-            <div class="event-meta muted mono">${ev.StartTime} – ${ev.EndTime} · ${ev.Duration_Min}m</div>
+          <div style="flex:1; display:flex; justify-content:space-between; align-items:center; overflow:hidden;">
+            <div class="event-info">
+              <h3>${ev.EventName}</h3>
+              <div class="event-meta muted mono">${ev.StartTime} – ${ev.EndTime} · ${ev.Duration_Min}m</div>
+            </div>
+            <div class="event-pts mono ${ptsColorClass}">${ptsText}</div>
           </div>
-          <div class="event-pts mono ${ptsColorClass}">${ptsText}</div>
+          <div class="checkbox-wrapper" onclick="event.stopPropagation()">
+            <input type="checkbox" class="circular-checkbox" ${isCompleted ? 'checked' : ''} onchange="toggleCompletion(${index}, false, this)">
+          </div>
         `;
         evCont.appendChild(div);
       });
@@ -187,13 +234,19 @@
         else { showToast(res.message, 'error'); }
       })
       .withFailureHandler(err => { icon.classList.remove('spin'); showToast(err.message, 'error'); })
-      .syncCalendar(2);
+      .syncCalendar(7, 2); 
   }
 
   function toggleDropdown() { document.getElementById('day-dropdown').classList.toggle('show'); }
+  function toggleDetailDropdown() { document.getElementById('detail-day-dropdown').classList.toggle('show'); }
   
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('.badge-container')) document.getElementById('day-dropdown').classList.remove('show');
+    if (!e.target.closest('.badge-container')) {
+      const d1 = document.getElementById('day-dropdown');
+      const d2 = document.getElementById('detail-day-dropdown');
+      if (d1) d1.classList.remove('show');
+      if (d2) d2.classList.remove('show');
+    }
   });
 
   function overrideDay(type) {
@@ -205,6 +258,16 @@
       .setDayOverride(state.todayDate, type);
   }
 
+  function overrideDetailDay(type) {
+    document.getElementById('detail-day-dropdown').classList.remove('show');
+    const targetDate = document.getElementById('detail-date-label').innerText;
+    showToast('Updating day type...', 'info');
+    google.script.run
+      .withSuccessHandler(res => refreshToday())
+      .withFailureHandler(err => showToast(err.message, 'error'))
+      .setDayOverride(targetDate, type);
+  }
+
   function toggleBreakdown() {
     const panel = document.getElementById('breakdown-panel');
     const icon = document.getElementById('bd-icon');
@@ -212,23 +275,52 @@
     else { panel.classList.add('expanded'); icon.innerText = '▴'; }
   }
 
-  // --- WEEK TAB LOGIC (CARD LIST VIEW) ---
+  // --- WEEK TAB LOGIC ---
   function renderWeek() {
     const days = state.appData.week.days;
-    const chartCont = document.getElementById('week-chart-cols'); 
-    chartCont.innerHTML = '<div class="week-list" id="week-list" style="width:100%;"></div>';
-    const listCont = document.getElementById('week-list');
+    const chartCont = document.getElementById('week-bar-chart');
+    const listCont = document.getElementById('week-list-container');
+    
+    chartCont.innerHTML = '';
+    listCont.innerHTML = '';
     
     let sumPts = 0, validDays = 0;
+    const maxPts = Math.max(...days.map(d => d.totalPoints), 12); 
 
     days.forEach(day => {
       const dObj = new Date(day.date.split('-')[0], day.date.split('-')[1]-1, day.date.split('-')[2]);
-      const dayName = new Intl.DateTimeFormat('en-GB', { weekday: 'long' }).format(dObj);
+      const dayNameFull = new Intl.DateTimeFormat('en-GB', { weekday: 'long' }).format(dObj);
+      const dayNameShort = new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(dObj);
       const dateShort = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }).format(dObj);
       
-      let statusColor = 'var(--safe)';
-      if(day.status === 'warning') statusColor = 'var(--warning)';
-      if(day.status === 'critical') statusColor = 'var(--critical)';
+      let statusColor = 'var(--safe)'; 
+      let barColor = '#6bb0f5';        
+      let bubbleBg = '#e8f2fe';        
+      let bubbleText = '#1c4a8a';      
+
+      if(day.status === 'warning') {
+         statusColor = 'var(--warning)';
+         barColor = '#f59e0b';
+         bubbleBg = '#fef3c7';
+         bubbleText = '#92400e';
+      }
+      if(day.status === 'critical') {
+         statusColor = 'var(--critical)';
+         barColor = '#f9758e';         
+         bubbleBg = '#ffe4e8';         
+         bubbleText = '#be123c';       
+      }
+
+      const heightPx = Math.max((day.totalPoints / maxPts) * 100, 4); 
+
+      const barCol = document.createElement('div');
+      barCol.className = 'bar-col';
+      barCol.innerHTML = `
+        <div class="bar-value-bubble" style="background:${bubbleBg}; color:${bubbleText}">${day.totalPoints.toFixed(1)}</div>
+        <div class="bar-fill" style="height: ${heightPx}px; background-color: ${barColor};"></div>
+        <div class="bar-label">${dayNameShort}</div>
+      `;
+      chartCont.appendChild(barCol);
 
       const item = document.createElement('div');
       item.className = 'week-item';
@@ -238,7 +330,7 @@
         <div class="week-item-left">
           <div class="week-item-date">${dateShort}</div>
           <div class="week-item-info">
-            <span class="week-item-day">${dayName}</span>
+            <span class="week-item-day">${dayNameFull}</span>
             <span style="font-size:0.7rem; color:var(--text-muted)">${day.dayType.toUpperCase()}</span>
           </div>
         </div>
@@ -259,17 +351,25 @@
     document.getElementById('week-overview').style.display = 'none';
     document.getElementById('day-detail-panel').classList.add('active');
     document.getElementById('detail-date-label').innerText = dateString;
+    
+    const dayData = state.appData.week.days.find(d => d.date === dateString);
+    if (dayData) {
+      document.getElementById('detail-day-badge-btn').innerText = dayData.dayType.replace('-', ' ').toUpperCase();
+    }
+
     document.getElementById('detail-events-container').innerHTML = '<p class="muted mono pulse-logo" style="text-align:center; padding:20px;">LOADING...</p>';
     
     google.script.run
       .withSuccessHandler(events => {
+        state.detailEvents = events; 
         const cont = document.getElementById('detail-events-container');
         cont.innerHTML = '';
         if (events.length === 0) {
           cont.innerHTML = '<p class="muted" style="font-size:0.85rem;text-align:center;padding:20px 0;">No events found</p>';
           return;
         }
-        events.forEach(ev => {
+        
+        events.forEach((ev, index) => {
           let tierClass = 'tier-Neutral';
           if (ev.BurnTier.includes('High')) tierClass = 'tier-High';
           if (ev.BurnTier.includes('Medium')) tierClass = 'tier-Medium';
@@ -280,12 +380,27 @@
           const ptsVal = parseFloat(ev.Points) || 0;
           let ptsColorClass = ptsVal === 0 ? 'muted' : (ptsVal < 0 ? 'text-recovery' : '');
           
+          const isCompleted = ev.Completed === true || String(ev.Completed).toUpperCase() === 'TRUE';
+          const completedClass = isCompleted ? 'completed' : '';
+
           const div = document.createElement('div');
-          div.className = `event-card ${tierClass}`;
-          div.style.cursor = 'default';
+          div.className = `event-card ${tierClass} ${completedClass}`;
+          
+          div.onclick = (e) => {
+            if (!e.target.closest('.checkbox-wrapper')) openEditModal(index, true); 
+          };
+          
           div.innerHTML = `
-            <div class="event-info"><h3>${ev.EventName}</h3><div class="event-meta muted mono">${ev.StartTime} – ${ev.EndTime} · ${ev.Duration_Min}m</div></div>
-            <div class="event-pts mono ${ptsColorClass}">${ptsVal.toFixed(1)}</div>
+            <div style="flex:1; display:flex; justify-content:space-between; align-items:center; overflow:hidden;">
+              <div class="event-info">
+                <h3>${ev.EventName}</h3>
+                <div class="event-meta muted mono">${ev.StartTime} – ${ev.EndTime} · ${ev.Duration_Min}m</div>
+              </div>
+              <div class="event-pts mono ${ptsColorClass}">${ptsVal.toFixed(1)}</div>
+            </div>
+            <div class="checkbox-wrapper" onclick="event.stopPropagation()">
+              <input type="checkbox" class="circular-checkbox" ${isCompleted ? 'checked' : ''} onchange="toggleCompletion(${index}, true, this)">
+            </div>
           `;
           cont.appendChild(div);
         });
@@ -380,9 +495,7 @@
     const s = state.appData.settings;
     const keys = [
       'DailyAllowance_WorkDay', 'DailyAllowance_RestDay', 'DeskBaseline_Points', 'Safe_Threshold', 'Warning_Threshold', 
-      'RecoveryCreditCap', 'ConsecutivePenalty_Value', 'ConsecutiveGap_Minutes',
-      'Weekday_RecoveryWindow_Start', 'Weekday_RecoveryWindow_End', 'Weekend_RecoveryWindow_Start', 
-      'Weekday_LateLoad_Threshold', 'Weekend_LateLoad_Threshold'
+      'RecoveryCreditCap', 'ConsecutivePenalty_Value', 'ConsecutiveGap_Minutes'
     ];
     
     keys.forEach(k => { const el = document.getElementById(`set-${k}`); if (el) el.value = s[k]; });
@@ -405,9 +518,7 @@
 
     const keys = [
       'DailyAllowance_WorkDay', 'DailyAllowance_RestDay', 'DeskBaseline_Points', 'Safe_Threshold', 'Warning_Threshold', 
-      'RecoveryCreditCap', 'ConsecutivePenalty_Value', 'ConsecutiveGap_Minutes',
-      'Weekday_RecoveryWindow_Start', 'Weekday_RecoveryWindow_End', 'Weekend_RecoveryWindow_Start', 
-      'Weekday_LateLoad_Threshold', 'Weekend_LateLoad_Threshold'
+      'RecoveryCreditCap', 'ConsecutivePenalty_Value', 'ConsecutiveGap_Minutes'
     ];
 
     const settingsObj = {};
@@ -442,15 +553,17 @@
     return shortName;
   }
 
-  function openModal(modalId) {
+  function openModal(modalId, isDetail = false) {
     const getSnappedTime = (date) => {
       const ms = 1000 * 60 * 15;
       return new Date(Math.round(date.getTime() / ms) * ms);
     };
 
+    const targetDate = isDetail ? document.getElementById('detail-date-label').innerText : state.todayDate;
+
     if (modalId === 'modal-add-event') {
       document.getElementById('add-name').value = '';
-      document.getElementById('add-date').value = state.todayDate;
+      document.getElementById('add-date').value = targetDate;
       
       const snappedNow = getSnappedTime(new Date());
       document.getElementById('add-start').value = snappedNow.toTimeString().slice(0,5);
@@ -464,7 +577,7 @@
       
     } else if (modalId === 'modal-manual-entry') {
       document.getElementById('man-name').value = '';
-      document.getElementById('man-date-label').innerText = state.todayDate;
+      document.getElementById('man-date-label').innerText = targetDate;
       
       const snappedNow = getSnappedTime(new Date());
       document.getElementById('man-start').value = snappedNow.toTimeString().slice(0,5);
@@ -511,13 +624,14 @@
   }
 
   // --- EDIT / DELETE EVENT LOGIC ---
-  function openEditModal(eventIndex) {
-    const ev = state.appData.today.events[eventIndex];
+  function openEditModal(eventIndex, isDetail = false) {
+    const ev = isDetail ? state.detailEvents[eventIndex] : state.appData.today.events[eventIndex];
     state.editingEvent = ev; 
 
     document.getElementById('edit-eventId').value = ev.CalendarEventID || '';
     document.getElementById('edit-name').value = ev.EventName;
-    document.getElementById('edit-date').value = ev.Date || state.todayDate;
+    document.getElementById('edit-date').value = ev.Date || (isDetail ? document.getElementById('detail-date-label').innerText : state.todayDate);
+    
     document.getElementById('edit-start').value = ev.StartTime;
     document.getElementById('edit-end').value = ev.EndTime;
     
@@ -556,6 +670,8 @@
     btn.innerText = 'Saving...';
     btn.disabled = true;
 
+    const oldDate = state.editingEvent.Date || state.todayDate;
+
     google.script.run
       .withSuccessHandler(res => {
         btn.innerText = 'Save Changes';
@@ -564,7 +680,7 @@
         else showToast('Failed: ' + res.message, 'error');
       })
       .withFailureHandler(err => { btn.innerText = 'Save Changes'; btn.disabled = false; showToast(err.message, 'error'); })
-      .updateCalendarEvent(id, title, date, start, end, getFullTierName(tierShort));
+      .updateCalendarEvent(id, title, date, start, end, getFullTierName(tierShort), oldDate);
   }
 
   function showDeleteConfirm() {
@@ -581,7 +697,6 @@
     const id = state.editingEvent.CalendarEventID;
     if (!id) return;
     
-    // Pass the specific date of the event so the backend targets the exact baseline instance
     const dateStr = state.editingEvent.Date || state.todayDate;
     
     const btn = document.getElementById('btn-confirm-delete');
@@ -618,7 +733,8 @@
     btn.innerText = 'Adding...';
     btn.disabled = true;
 
-    const entryObject = { eventName: title, dateString: state.todayDate, startTime: start, endTime: end, burnTierName: getFullTierName(tierShort) };
+    const targetDate = document.getElementById('man-date-label').innerText;
+    const entryObject = { eventName: title, dateString: targetDate, startTime: start, endTime: end, burnTierName: getFullTierName(tierShort) };
 
     google.script.run
       .withSuccessHandler(res => {
