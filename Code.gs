@@ -56,7 +56,7 @@ function getSetting(parameterName) {
     const data = getSheetData(sheet); // Uses Utils cache
     const idxParam = getColumnIndex(sheet, 'A (Parameter)');
     const idxVal = getColumnIndex(sheet, 'B (Value)');
-    
+
     SETTINGS_CACHE = {};
     data.forEach(row => {
       if (row[idxParam]) {
@@ -111,7 +111,7 @@ function getDayType(dateString) {
   }
   
   const parts = dateString.split('-');
-  const dateObj = new Date(parts[0], parts[1] - 1, parts[2]); 
+  const dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
   const day = dateObj.getDay(); 
   
   if (day >= 1 && day <= 4) return 'work';
@@ -121,7 +121,6 @@ function getDayType(dateString) {
 function setDayOverride(dateString, dayType) {
   const validTypes = ['work', 'autonomous', 'rest'];
   const typeLower = dayType.toLowerCase();
-  
   if (!validTypes.includes(typeLower)) throw new Error(`Invalid dayType '${dayType}'.`);
 
   const sheet = getSheetByName('DayOverrides');
@@ -136,30 +135,6 @@ function setDayOverride(dateString, dayType) {
   }
 }
 
-function applyValidationFlags(startTimeStr, endTimeStr, dateString) {
-  const dayType = getDayType(dateString);
-  let recoveryStart, recoveryEnd, lateLoadThreshold;
-  
-  if (dayType === 'work') {
-    recoveryStart = getSetting('Weekday_RecoveryWindow_Start');
-    recoveryEnd = getSetting('Weekday_RecoveryWindow_End');
-    lateLoadThreshold = getSetting('Weekday_LateLoad_Threshold');
-  } else {
-    recoveryStart = getSetting('Weekend_RecoveryWindow_Start');
-    try { recoveryEnd = getSetting('Weekend_RecoveryWindow_End'); } 
-    catch (e) { recoveryEnd = getSetting('Weekday_RecoveryWindow_End'); }
-    lateLoadThreshold = getSetting('Weekend_LateLoad_Threshold');
-  }
-
-  const startInWindow = timeFallsWithin(startTimeStr, recoveryStart, recoveryEnd);
-  const endInWindow = timeFallsWithin(endTimeStr, recoveryStart, recoveryEnd);
-  const recoveryWindowFlag = startInWindow || endInWindow;
-  const lateLoadFlag = timeFallsWithin(endTimeStr, lateLoadThreshold, "04:00");
-
-  return { recoveryWindowFlag, lateLoadFlag };
-}
-
-
 // --- BASELINE EVENT GENERATION ---
 function isBaselineDisabled(dateString) {
   const sheet = getSheetByName('DailyLog');
@@ -167,7 +142,7 @@ function isBaselineDisabled(dateString) {
   const idxDate = getColumnIndex(sheet, 'Date');
   const idxID = getColumnIndex(sheet, 'CalendarEventID');
   const idxName = getColumnIndex(sheet, 'EventName');
-  
+
   return data.some(row => {
     const rowDate = (row[idxDate] instanceof Date) ? getDateString(row[idxDate]) : String(row[idxDate]);
     return rowDate === dateString && row[idxID] === 'SYSTEM_BASELINE' && String(row[idxName]).includes('(Off)');
@@ -233,8 +208,7 @@ function getDailyTotals(dateString) {
   if (getSettingAsBool('ConsecutivePenalty_Enabled')) {
     const penaltyValue = getSettingAsNumber('ConsecutivePenalty_Value');
     const gapThreshold = getSettingAsNumber('ConsecutiveGap_Minutes');
-    const refDate = new Date(); 
-
+    const refDate = new Date();
     highBurnEvents.sort((a, b) => parseTimeString(a.startStr, refDate).getTime() - parseTimeString(b.startStr, refDate).getTime());
 
     for (let i = 1; i < highBurnEvents.length; i++) {
@@ -273,7 +247,6 @@ function getDailyTotals(dateString) {
 function getAppData() {
   try {
     const todayStr = getDateString(new Date());
-    
     // Inject baseline if needed before calculations
     ensureBaselineEvent(todayStr); 
     
@@ -281,11 +254,31 @@ function getAppData() {
     const events = getEventsForDate(todayStr);
     
     const alerts = [];
-    events.forEach(ev => {
-      if (ev.RecoveryWindowFlag) alerts.push({ type: 'recovery', message: `"${ev.EventName}" overlaps your recovery window` });
-      if (ev.LateLoadFlag)       alerts.push({ type: 'late',     message: `"${ev.EventName}" ends at ${ev.EndTime} — late cognitive load` });
-    });
     
+    // --- OVERLAP DETECTION ---
+    // Exclude the desk baseline from throwing false positive overlap warnings
+    const schedulableEvents = events.filter(e => e.CalendarEventID !== 'SYSTEM_BASELINE');
+    let overlapFound = false;
+    let maxEnd = "00:00";
+
+    for (let i = 0; i < schedulableEvents.length; i++) {
+      const start = schedulableEvents[i].StartTime || "00:00";
+      const end = schedulableEvents[i].EndTime || "00:00";
+
+      if (start < maxEnd) {
+        overlapFound = true;
+        break;
+      }
+      if (end > maxEnd) {
+        maxEnd = end;
+      }
+    }
+
+    if (overlapFound) {
+      alerts.push({ type: 'overlap', message: '⚠ Warning: Overlapping events detected.' });
+    }
+    // -------------------------
+
     const weekDays = [];
     const today = new Date();
     const dayOfWeek = today.getDay(); 
@@ -296,7 +289,8 @@ function getAppData() {
       d.setDate(today.getDate() + mondayOffset + i);
       const ds = getDateString(d);
       
-      ensureBaselineEvent(ds); // Inject baseline for each day of week
+      // Inject baseline for each day of week
+      ensureBaselineEvent(ds);
       
       const dt = getDailyTotals(ds);
       weekDays.push({ 
@@ -307,23 +301,20 @@ function getAppData() {
     const settingKeys = [
       'DailyAllowance_WorkDay','DailyAllowance_RestDay','DeskBaseline_Points',
       'RecoveryCreditCap','ConsecutivePenalty_Enabled','ConsecutivePenalty_Value',
-      'ConsecutiveGap_Minutes','Weekday_RecoveryWindow_Start','Weekday_RecoveryWindow_End',
-      'Weekend_RecoveryWindow_Start','Weekday_LateLoad_Threshold','Weekend_LateLoad_Threshold',
-      'Safe_Threshold','Warning_Threshold'
+      'ConsecutiveGap_Minutes','Safe_Threshold','Warning_Threshold'
     ];
-    
+
     const settings = {};
     settingKeys.forEach(k => {
       try { settings[k] = getSetting(k); } catch (e) { settings[k] = null; }
     });
-    
+
     return {
       success: true,
       today: { date: todayStr, dayType: totals.dayType, totals, events, alerts },
       week:  { days: weekDays },
       settings
     };
-    
   } catch(e) {
     logEvent('getAppData', 'ERROR', e.toString());
     return { success: false, message: e.toString() };
@@ -335,7 +326,6 @@ function getAnalyticsData(period) {
     const daysToSubtract = period === '7days' ? 7 : (period === '30days' ? 30 : 90);
     const refDate = new Date();
     const endDateStr = getDateString(refDate);
-    
     const startDate = new Date();
     startDate.setDate(refDate.getDate() - daysToSubtract + 1);
     const startDateStr = getDateString(startDate);
@@ -347,7 +337,7 @@ function getAnalyticsData(period) {
     const archiveSheet = getSheetByName('Archive');
     const dailyLogSheet = getSheetByName('DailyLog');
     
-    const archiveData = getSheetData(archiveSheet); 
+    const archiveData = getSheetData(archiveSheet);
     const dailyLogData = getSheetData(dailyLogSheet); 
     const combinedData = [...archiveData, ...dailyLogData];
 
@@ -412,7 +402,7 @@ function getAnalyticsData(period) {
       
       let dailyTotal = dayData.points + baseline + clampedRecovery;
       dailyTotal = Math.round(dailyTotal * 100) / 100;
-      
+  
       let status = 'safe';
       if (dailyTotal >= warningThreshold) status = 'critical';
 
