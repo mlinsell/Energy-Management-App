@@ -111,6 +111,7 @@
   .alert-card.type-recovery { border-left-color: var(--warning); }
   .alert-card.type-late { border-left-color: var(--critical); }
   .alert-card.type-consecutive { border-left-color: var(--med-burn); }
+  .alert-card.type-overlap { border-left-color: var(--critical); color: var(--critical); font-weight: 500; }
 
   .events-section h2 { font-size: 1rem; margin-bottom: 12px; color: var(--text-main); }
   .event-card { 
@@ -131,7 +132,101 @@
   .tier-Recovery { border-left-color: var(--recovery); }
   .tier-Neutral { border-left-color: var(--tier-neutral); }
 
-  /* --- WEEK TAB CSS (LIST LAYOUT) --- */
+  /* --- CHECKBOX & COMPLETION STYLES --- */
+  .checkbox-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-left: 14px;
+    margin-left: 14px;
+    border-left: 1px solid var(--border);
+  }
+  .circular-checkbox {
+    appearance: none;
+    width: 24px;
+    height: 24px;
+    border: 2px solid #d1d5db;
+    border-radius: 50%;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s;
+    outline: none;
+    background: var(--surface);
+  }
+  .circular-checkbox:checked {
+    background-color: var(--safe);
+    border-color: var(--safe);
+  }
+  .circular-checkbox:checked::after {
+    content: '✓';
+    position: absolute;
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+  }
+  .event-card.completed {
+    opacity: 0.55;
+    background-color: #f9fafb;
+  }
+  .event-card.completed .event-info h3 {
+    text-decoration: line-through;
+    color: var(--text-muted);
+  }
+  .event-card.completed .event-pts {
+    color: var(--text-muted);
+  }
+
+  /* --- WEEK TAB CSS (BAR CHART & LIST LAYOUT) --- */
+  .weekly-summary-card {
+    background: var(--surface);
+    border-radius: 16px;
+    padding: 20px 16px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border);
+  }
+  .section-subtitle {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: var(--text-main);
+  }
+  .bar-chart-wrapper {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    height: 150px; 
+  }
+  .bar-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+    gap: 8px;
+  }
+  .bar-value-bubble {
+    border-radius: 12px;
+    padding: 4px 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: 'DM Sans', sans-serif;
+  }
+  .bar-fill {
+    width: 28px;
+    border-radius: 8px;
+    transition: height 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    min-height: 4px;
+  }
+  .bar-label {
+    font-size: 0.8rem;
+    color: var(--text-main);
+    font-weight: 500;
+    margin-top: 4px;
+  }
+
   .week-list { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
   .week-item { 
     background: var(--surface); border: 1px solid var(--border); 
