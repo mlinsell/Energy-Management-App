@@ -14,6 +14,7 @@
     <div id="loading-screen"><div class="pulse-logo mono">CEMS</div></div>
     <div id="error-screen" style="display:none;"><div style="text-align:center; padding: 20px;"><h2 style="color:var(--text-main);">System Error</h2><p id="error-msg" class="muted"></p><button class="btn btn-secondary" onclick="init()">Retry</button></div></div>
     <div id="main" style="display:none">
+      
       <div id="tab-today" class="tab-content active">
         <div class="header">
           <h1 id="today-date-label">--</h1>
@@ -46,24 +47,62 @@
         <div class="alerts-section" id="alerts-container"></div>
         <div class="events-section"><div id="events-container"></div></div>
       </div>
+      
       <div id="tab-week" class="tab-content">
         <div class="header"><h1>Week Overview</h1></div>
+        
         <div id="week-overview">
-          <div class="week-chart-container"><div class="allowance-line"></div><div id="week-chart-cols" style="display:flex; width:100%;"></div></div>
-          <div class="rolling-avg-box"><div class="muted" style="font-size:0.85rem; font-weight:500;">7-Day Rolling Average</div><div class="rolling-avg-val mono bold" id="week-rolling-avg">0.0 pts</div></div>
+          <div class="weekly-summary-card">
+            <div class="section-subtitle">Weekly Summary</div>
+            <div class="bar-chart-wrapper" id="week-bar-chart"></div>
+          </div>
+
+          <div class="rolling-avg-box">
+            <div class="muted" style="font-size:0.85rem; font-weight:500;">7-Day Rolling Average</div>
+            <div class="rolling-avg-val mono bold" id="week-rolling-avg">0.0 pts</div>
+          </div>
+          
+          <div class="section-subtitle" style="margin-top: 24px;">Daily Insights</div>
+          <div id="week-list-container" class="week-list"></div>
         </div>
+
         <div class="day-detail-panel" id="day-detail-panel">
-          <button class="btn-back" onclick="hideDayDetail()"><svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;"><path d="M15 19l-7-7 7-7"/></svg> Back to Week</button>
-          <div class="header" style="margin-top:8px;"><h1 id="detail-date-label">Date</h1></div>
+          <button class="btn-back" onclick="hideDayDetail()">
+            <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;"><path d="M15 19l-7-7 7-7"/></svg> Back to Week
+          </button>
+          
+          <div class="header" style="margin-top:8px;">
+            <h1 id="detail-date-label">Date</h1>
+            <div class="badge-container">
+              <button class="day-badge" id="detail-day-badge-btn" onclick="toggleDetailDropdown()">--</button>
+              <div class="dropdown" id="detail-day-dropdown">
+                <button onclick="overrideDetailDay('work')">WORK DAY</button>
+                <button onclick="overrideDetailDay('autonomous')">AUTONOMOUS</button>
+                <button onclick="overrideDetailDay('rest')">REST DAY</button>
+              </div>
+            </div>
+          </div>
+          
+          <div style="display: flex; gap: 12px; margin-bottom: 24px;">
+            <button class="btn btn-secondary" style="flex: 1; min-height: 40px; font-size: 0.85rem;" onclick="openModal('modal-add-event', true)">
+              <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;margin-right:4px;vertical-align:text-bottom;"><path d="M12 4v16m8-8H4"/></svg> Add Event
+            </button>
+            <button class="btn btn-secondary" style="flex: 1; min-height: 40px; font-size: 0.85rem;" onclick="openModal('modal-manual-entry', true)">
+              <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;margin-right:4px;vertical-align:text-bottom;"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg> Manual Log
+            </button>
+          </div>
+          
           <div class="events-section"><div id="detail-events-container"></div></div>
         </div>
       </div>
+      
       <div id="tab-analytics" class="tab-content">
         <div class="header"><h1>Analytics</h1></div>
         <div class="period-toggles" id="analytics-toggles"><button class="toggle-btn" onclick="loadAnalytics('7days')">7 Days</button><button class="toggle-btn active" onclick="loadAnalytics('30days')">30 Days</button><button class="toggle-btn" onclick="loadAnalytics('90days')">90 Days</button></div>
         <div class="loader-inline mono pulse-logo" id="analytics-loader">LOADING...</div>
         <div id="analytics-content" style="display:none;"><div class="overload-card" id="analytics-overload"></div><div class="stats-grid"><div class="stat-card"><span class="stat-lbl">All Days Avg</span><span class="stat-val mono" id="stat-avg-all">0.0</span></div><div class="stat-card"><span class="stat-lbl">Work Days Avg</span><span class="stat-val mono" id="stat-avg-work">0.0</span></div><div class="stat-card"><span class="stat-lbl">Autonomous Avg</span><span class="stat-val mono" id="stat-avg-auto">0.0</span></div><div class="stat-card" style="border-left-color: var(--warning);"><span class="stat-lbl">Days Over Warning</span><span class="stat-val mono" id="stat-days-over">0</span></div><div class="stat-card" style="border-left-color: var(--safe);"><span class="stat-lbl">Best Day</span><span class="stat-val mono" id="stat-best-val">0.0</span><span class="stat-sub mono" id="stat-best-date">-</span></div><div class="stat-card" style="border-left-color: var(--critical);"><span class="stat-lbl">Worst Day</span><span class="stat-val mono" id="stat-worst-val">0.0</span><span class="stat-sub mono" id="stat-worst-date">-</span></div><div class="stat-card"><span class="stat-lbl">High Burn Hrs</span><span class="stat-val mono" id="stat-high-hrs">0.0</span></div><div class="stat-card"><span class="stat-lbl">Recovery Hrs</span><span class="stat-val mono" id="stat-rec-hrs">0.0</span></div></div><div class="distribution-card"><span class="stat-lbl">Tier Distribution</span><div class="dist-bar-container" id="dist-bar"></div><div class="stat-sub" id="dist-total-hrs" style="text-align:right; margin-top:8px;"></div></div></div>
       </div>
+      
       <div id="tab-settings" class="tab-content">
         <div class="header"><h1>Settings</h1></div>
         <div id="settings-form">
@@ -78,12 +117,6 @@
           <div class="form-group"><label>Consecutive Penalty</label><label class="toggle-switch"><input type="checkbox" id="set-ConsecutivePenalty_Enabled" onchange="togglePenaltyFields()"><span class="slider"></span></label></div>
           <div class="form-group"><label>Penalty Value (pts)</label><input type="number" step="0.5" class="input-field" id="set-ConsecutivePenalty_Value"></div>
           <div class="form-group"><label>Gap Threshold (mins)</label><input type="number" step="1" class="input-field" id="set-ConsecutiveGap_Minutes"></div>
-          <div class="section-title">Time Windows</div>
-          <div class="form-group"><label>Wkdy Recovery Start</label><input type="time" step="900" class="input-field" id="set-Weekday_RecoveryWindow_Start"></div>
-          <div class="form-group"><label>Wkdy Recovery End</label><input type="time" step="900" class="input-field" id="set-Weekday_RecoveryWindow_End"></div>
-          <div class="form-group"><label>Wknd Recovery Start</label><input type="time" step="900" class="input-field" id="set-Weekend_RecoveryWindow_Start"></div>
-          <div class="form-group"><label>Wkdy Late Load</label><input type="time" step="900" class="input-field" id="set-Weekday_LateLoad_Threshold"></div>
-          <div class="form-group"><label>Wknd Late Load</label><input type="time" step="900" class="input-field" id="set-Weekend_LateLoad_Threshold"></div>
         </div>
         <button id="btn-save-settings" class="btn btn-primary" style="width:100%; margin-top:24px;" onclick="saveSettingsForm()">Save Settings</button>
       </div>
